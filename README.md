@@ -40,7 +40,6 @@ O progresso é salvo **localmente no navegador** e, opcionalmente, **na nuvem** 
 - ☁️ **Coleções compartilhadas** — login por e-mail/senha (Supabase), crie uma coleção ou entre pelo código e sincronize com os amigos.
 - 👥 **Gestão de membros** — veja quem entrou/saiu (com data e hora) e remova membros (só o dono).
 - 💾 **Backup/importação** — exporte e restaure seu progresso em JSON.
-- 📱 **Responsivo** — menu inferior e dropdowns que abrem sempre para baixo.
 
 ---
 
