@@ -361,6 +361,16 @@ const WORDS = {
 };
 function title(s){return s.replace(/(^|\s|-)(\p{L})/gu,(m,p,c)=>p+c.toUpperCase())}
 function displayName(id){
+ if(id.startsWith('custom_potion_')){
+  const parts=id.split('_');
+  const effect=parts[2];
+  const type=parts[3];
+  const effectName=POTION_EFFECTS.find(e=>e[1]===effect)?POTION_EFFECTS.find(e=>e[1]===effect)[0]:'Desconhecida';
+  const typeName=POTION_VARIANTS.find(v=>v.s.toLowerCase().replace(' ','_')===type)?POTION_VARIANTS.find(v=>v.s.toLowerCase().replace(' ','_')).s:'';
+  return `Poção de ${effectName} (${typeName})`;
+ }
+ // Original logic here...
+
  if(SPECIAL[id]) return SPECIAL[id];
  let s=id;
  for(const [a,b] of PHRASES) s=s.replaceAll(a,b.replaceAll(' ','§'));
@@ -434,6 +444,21 @@ const NOT_SURVIVAL=new Set(['air','barrier','bedrock','chain_command_block','com
 const NOT_SURVIVAL_RE=[/_spawn_egg$/,/^infested_/];
 const EXCLUDED=[],SURVIVAL_IDS=[];
 for(const id of ALL_ITEMS)(NOT_SURVIVAL.has(id)||NOT_SURVIVAL_RE.some(r=>r.test(id))?EXCLUDED:SURVIVAL_IDS).push(id);
+const POTION_EFFECTS=[
+ ['Cura','healing'],['Regeneração','regeneration'],['Força','strength'],['Rapidez','swiftness'],['Lentidão','slowness'],['Invisibilidade','invisibility'],
+ ['Resistência ao Fogo','fire_resistance'],['Veneno','poison'],['Dano','harming'],['Fraqueza','weakness'],['Salto','leaping'],['Queda Lenta','slow_falling'],
+ ['Respiracão Aquática','water_breathing'],['Turtuguem','turtle_master'],['Mindfulness','mindfulness']
+];
+const POTION_VARIANTS=[
+ {s:'Beber',id:'potion',name:''},{s:'Arremessável',id:'splash_potion',name:' '},{s:'Prolongada',id:'lingering_potion',name:' '}
+];
+POTION_EFFECTS.forEach(([n,id])=>{
+ POTION_VARIANTS.forEach(v=>{
+  const uid=`custom_potion_${id}_${v.s.toLowerCase().replace(' ','_')}`;
+  SURVIVAL_IDS.push(uid);
+  // We will handle the display name in a custom map or by overriding
+ });
+});
 // ───────── Categorias (regras em ordem; a primeira que casar vence) ─────────
 const CAT_RULES=[
 ['Discos musicais',/^music_disc|^disc_fragment/],['Moldes de ferraria',/smithing_template/],['Óstracos de cerâmica',/pottery_sherd/],
@@ -444,7 +469,7 @@ const CAT_RULES=[
 ['Ferramentas',/(_pickaxe|_axe|_shovel|_hoe)$|^(shears|flint_and_steel|brush|fishing_rod|spyglass|compass|recovery_compass|clock|lead|name_tag)$|(^|_)bucket$/],
 ['Livros e papel',/^(book|enchanted_book|writable_book|written_book|paper|bookshelf|chiseled_bookshelf|experience_bottle)$/],
 ['Estações de trabalho',/^(crafting_table|furnace|blast_furnace|smoker|smithing_table|cartography_table|fletching_table|loom|stonecutter|grindstone|anvil|chipped_anvil|damaged_anvil|brewing_stand|cauldron|enchanting_table|lectern|composter|beacon|conduit|jukebox|note_block|lodestone)$/],
-['Poções',/^(potion|splash_potion|lingering_potion)$/],['Frascos e Ingredientes',/^(glass_bottle|dragon_breath|ominous_bottle)$/],
+['Poções',/^custom_potion|^potion|^splash_potion|^lingering_potion$/],['Frascos e Ingredientes',/^(glass_bottle|dragon_breath|ominous_bottle)$/],
 ['Drops de mobs',/^(bone|string|feather|gunpowder|leather|rabbit_hide|rabbit_foot|rotten_flesh|slime_ball|slime_block|honey_block|spider_eye|fermented_spider_eye|ghast_tear|blaze_rod|blaze_powder|magma_cream|phantom_membrane|armadillo_scute|turtle_scute|nautilus_shell|ink_sac|glow_ink_sac|egg|brown_egg|blue_egg|honeycomb|ender_pearl|ender_eye|echo_shard|breeze_rod|heavy_core|totem_of_undying|heart_of_the_sea|shulker_shell|nether_star|prismarine_shard|prismarine_crystals|sniffer_egg|turtle_egg|goat_horn|dragon_egg|trial_key|ominous_trial_key|snowball)$/],
 ['Agricultura',/seeds$|^(wheat|sugar_cane|sugar|melon|pumpkin|carved_pumpkin|cocoa_beans|hay_block|bone_meal|dried_kelp_block|bee_nest|beehive)$/],
 ['Comidas',/(^|_)(apple|bread|beef|beetroot|carrot|chicken|cod|cookie|mutton|porkchop|potato|rabbit|salmon|stew|soup|melon_slice|berries|pumpkin_pie|honey_bottle|dried_kelp|chorus_fruit|cake|tropical_fish|pufferfish|glistering_melon_slice)(_|$)/],
@@ -1291,7 +1316,14 @@ function layout(){
 }
 const SPR=48,MC_API='https://mc-api.bisai.dev/v1/assets/items/',MC_API_B='https://mc-api.bisai.dev/v1/assets/blocks/';
 const ICON_BAD=new Set(),ICON_OK=new Map(),ICON_WAIT=new Map(),iconQueue=[];let iconActive=0,pumpQ=false;const ICON_PAR=24;
-function mcUrl(id,S){return (/(_head|_skull)$/.test(id)?MC_API_B:MC_API)+encodeURIComponent(id)+'/texture.png?size='+(S*4)}
+function mcUrl(id,S){
+ if(id.startsWith('custom_potion_')){
+  const parts=id.split('_');
+  const type=parts[3];
+  const map={beber:'potion',arremessavel:'splash_potion',prolongada:'lingering_potion'};
+  id=map[type]||'potion';
+ }
+ return (/(_head|_skull)$/.test(id)?MC_API_B:MC_API)+encodeURIComponent(id)+'/texture.png?size='+(S*4)}
 function iconFallback(d,x,S){
   const [a,b]=colorForCategory(x.cat);d.classList.remove('ld');d.classList.add('fb');
   d.style.background='linear-gradient('+a+','+b+')';d.style.fontSize=S/3+'px';
