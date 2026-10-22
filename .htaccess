@@ -1,0 +1,6 @@
+# Sempre conferir com o servidor se o HTML mudou (evita o navegador mostrar uma versão antiga do site)
+<IfModule mod_headers.c>
+  <FilesMatch "\.html$">
+    Header set Cache-Control "no-cache, must-revalidate"
+  </FilesMatch>
+</IfModule>

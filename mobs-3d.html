@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mobs 3D</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:radial-gradient(ellipse at 50% 40%,#5d636c 0%,#3a3e45 60%,#2a2d33 100%);font-family:system-ui,sans-serif}
+  canvas{display:block}
+  .ui{position:fixed;left:16px;bottom:16px;display:flex;gap:8px;flex-wrap:wrap}
+  .ui button{background:#1e2127cc;color:#e8e3d6;border:1px solid #555b64;border-radius:6px;padding:8px 12px;font-size:14px;cursor:pointer}
+  .ui button:hover{background:#2b2f37}
+  .hint{position:fixed;left:16px;top:16px;color:#c9c4b8;font-size:13px;opacity:.75}
+</style>
+<script type="importmap">
+{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}
+</script>
+</head>
+<body>
+<div class="hint">Arraste para girar · clique no creeper para ele inflar</div>
+<div class="ui">
+  <button id="btnWalk">Andar / Parar</button>
+  <button id="btnSpin">Girar</button>
+</div>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ═══ AJUSTES ═══
+// Medidas em pixels do Minecraft (1 unidade = 1 pixel de textura)
+const CFG = {
+  seed: 7,             // troque para gerar outro padrão de pele
+  walkSpeed: 4,        // velocidade do ciclo de passos
+  legSwing: 28,        // amplitude do balanço das pernas (graus)
+  tailSway: 14,        // balanço lateral do rabo do gato a cada ciclo de passos (graus)
+  tailBob: 12,         // quique do rabo para cima/baixo a cada passada (graus)
+  creeper: {
+    // Camuflagem: tons de verde e cinza e o peso de cada um no sorteio
+    palette: ['#0c5a0a','#1e7a17','#2e9c23','#42b62f','#5ccc45','#79db62','#9fe88d','#c2cfc0','#9aa898','#e6ede4'],
+    weights: [1.2, 2, 2.6, 2.6, 2.2, 1.6, .9, .7, .6, .3],
+    feet: ['#0f240a','#1b3d12','#24521a'],   // pontas escuras dos pés
+    face: { eye: '#000000', mouth: '#0b1f08', mouthIn: '#000000' },
+  },
+  cow: {
+    brown: ['#372b1f','#2e241c','#3c3024','#3f2f22'],  // marrom-escuro (1º tom domina)
+    brownWeights: [12, 2, 1, .6],
+    spots: ['#a5a5a9','#b4b4b9','#8f9192','#c1c3c4','#747476'], // manchas cinza (não branco puro)
+    spotWeights: [4, 3, 1.5, 1, .8],
+    spotAmount: .62,    // limiar das manchas no corpo (menor = mais cinza)
+    spotSize: 5,        // tamanho das manchas (pixels)
+    hoof: '#141110',    // casco (última linha das pernas)
+    horn: ['#a4a4a6','#9fa1a5','#85878b'],             // chifre de cima para baixo
+    ear: ['#d99a9c','#b98689'],                        // orelha rosa na lateral da cabeça
+    headLift: 2,        // quanto a cabeça fica acima do topo do corpo (pixels)
+    // Rosto 8x8 copiado da referência, pixel a pixel (linha de cima primeiro):
+    // B marrom · g cinza-claro · d cinza-escuro · w sobrancelha clara · E pupila · O branco do olho
+    // m cinza-médio · M focinho claro · N narina · n focinho cinza · k focinho escuro · u focinho lateral
+    face: ['BBBggddB',
+           'BBBgggBB',
+           'wwBggBww',
+           'EOBmBBOE',
+           'BBBBBBBB',
+           'BBMMMMBB',
+           'BMNnnNMB',
+           'BunkknMB'],
+    faceColors: { g: '#a5a5a9', d: '#747476', w: '#b4b4b9', E: '#000000', O: '#e1e3e7', m: '#8f9192', M: '#c2c3c6', N: '#000000', n: '#545356', k: '#3f3f41', u: '#aaa9ae' },
+  },
+  chicken: {
+    white: ['#f7f7f7','#e8e8e8','#d9d9d9','#cfcfcf'],
+    beak: ['#c8963a','#b5832e','#a8742a'], beakDark: '#5a3e14',
+    wattle: ['#e01515','#c40d0d'],
+    leg: ['#e8cf6a','#d4b955'],
+    eye: '#000000',
+    flapEvery: 3,       // a cada ~N segundos bate as asas (0 desliga)
+  },
+  cat: {
+    white: ['#f2f2f2','#e3e3e3','#d6d6d6'],
+    orange: ['#e3a446','#d18f33','#b8782a','#e9bd7d'],
+    dark: ['#3d362c','#2b2620','#4b4236'],
+    orangeAmount: .5,   // limiar das manchas laranja (menor = mais laranja)
+    darkAmount: .56,    // limiar das manchas escuras (menor = mais escuro)
+    patchSize: 4.2,     // tamanho das manchas (pixels)
+    eye: '#0b1220', iris: '#4ab3c8', nose: '#c47f80',
+  },
+};
+
+// ── Ruído determinístico ──
+function hash3(x, y, z, s = 0) {
+  let h = Math.imul(x | 0, 374761393) ^ Math.imul(y | 0, 668265263) ^ Math.imul(z | 0, 1274126177) ^ Math.imul((s + CFG.seed) | 0, 2147483647);
+  h = Math.imul(h ^ h >>> 13, 1103515245); h ^= h >>> 16; return (h >>> 0) / 4294967296;
+}
+const lerp = (a, b, t) => a + (b - a) * t, fade = t => t * t * (3 - 2 * t);
+function noise3(x, y, z, s) {
+  const xi = Math.floor(x), yi = Math.floor(y), zi = Math.floor(z), xf = fade(x - xi), yf = fade(y - yi), zf = fade(z - zi);
+  const c = (dx, dy, dz) => hash3(xi + dx, yi + dy, zi + dz, s);
+  return lerp(lerp(lerp(c(0,0,0), c(1,0,0), xf), lerp(c(0,1,0), c(1,1,0), xf), yf),
+              lerp(lerp(c(0,0,1), c(1,0,1), xf), lerp(c(0,1,1), c(1,1,1), xf), yf), zf);
+}
+const pick = (arr, r, w) => { if (!w) return arr[Math.floor(r * arr.length) % arr.length]; let t = r * w.reduce((a, b) => a + b, 0); for (let i = 0; i < arr.length; i++) { if ((t -= w[i]) < 0) return arr[i]; } return arr[arr.length - 1]; };
+
+// ── Caixa com textura pixel gerada texel a texel ──
+// color(face, i, j, W, H, p) devolve a cor do texel; p = posição 3D do texel no espaço do modelo (para manchas contínuas entre faces)
+const FACES = [ // ordem do BoxGeometry: +x, -x, +y, -y, +z, -z  (eixos do canvas: esquerda->direita, topo->baixo)
+  { n: 'right',  dims: (w,h,d) => [d,h], pt: (s,t,w,h,d) => [ w/2, h/2 - t*h,  d/2 - s*d] },
+  { n: 'left',   dims: (w,h,d) => [d,h], pt: (s,t,w,h,d) => [-w/2, h/2 - t*h, -d/2 + s*d] },
+  { n: 'top',    dims: (w,h,d) => [w,d], pt: (s,t,w,h,d) => [-w/2 + s*w,  h/2, -d/2 + t*d] },
+  { n: 'bottom', dims: (w,h,d) => [w,d], pt: (s,t,w,h,d) => [-w/2 + s*w, -h/2,  d/2 - t*d] },
+  { n: 'front',  dims: (w,h,d) => [w,h], pt: (s,t,w,h,d) => [-w/2 + s*w, h/2 - t*h,  d/2] },
+  { n: 'back',   dims: (w,h,d) => [w,h], pt: (s,t,w,h,d) => [ w/2 - s*w, h/2 - t*h, -d/2] },
+];
+function pixelBox([w, h, d], center, color) {
+  const mats = FACES.map(f => {
+    const [W, H] = f.dims(w, h, d), c = document.createElement('canvas'); c.width = W; c.height = H;
+    const g = c.getContext('2d');
+    for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
+      const [x, y, z] = f.pt((i + .5) / W, (j + .5) / H, w, h, d);
+      g.fillStyle = color(f.n, i, j, W, H, [x + center[0], y + center[1], z + center[2]]); g.fillRect(i, j, 1, 1);
+    }
+    const t = new THREE.CanvasTexture(c); t.magFilter = t.minFilter = THREE.NearestFilter; t.generateMipmaps = false; t.colorSpace = THREE.SRGBColorSpace;
+    return new THREE.MeshLambertMaterial({ map: t });
+  });
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mats); m.castShadow = m.receiveShadow = true; return m;
+}
+// Peça articulada: o grupo fica no pivô (ex.: quadril), a caixa pendurada a partir dele
+function limb(size, pivot, offset, color) {
+  const g = new THREE.Group(); g.position.set(...pivot);
+  const center = [pivot[0] + offset[0], pivot[1] + offset[1], pivot[2] + offset[2]];
+  const m = pixelBox(size, center, color); m.position.set(...offset); g.add(m); return g;
+}
+
+// ═══ CREEPER ═══ cabeça 8x8x8, corpo 8x12x4, 4 pernas 4x6x4 (frente para +Z)
+function createCreeper() {
+  const C = CFG.creeper, root = new THREE.Group(); root.name = 'creeper';
+  const skin = (p, s) => pick(C.palette, hash3(Math.floor(p[0] * 1.001 + 64), Math.floor(p[1] * 1.001 + 64), Math.floor(p[2] * 1.001 + 64), s), C.weights);
+  // Rosto (8x8): olhos 2x2, boca em "T" invertido
+  const FACE = ['........','........','.EE..EE.','.EE..EE.','...MM...','..MKKM..','..MKKM..','..M..M..'];
+  const headColor = (f, i, j, W, H, p) => {
+    if (f === 'front') { const k = FACE[j][i]; if (k === 'E') return C.face.eye; if (k === 'M') return C.face.mouth; if (k === 'K') return C.face.mouthIn; }
+    return skin(p, 1);
+  };
+  const head = limb([8, 8, 8], [0, 18, 0], [0, 4, 0], headColor); head.name = 'head';
+  const body = pixelBox([8, 12, 4], [0, 12, 0], (f, i, j, W, H, p) => skin(p, 2)); body.position.set(0, 12, 0);
+  const legColor = (f, i, j, W, H, p) => (p[1] < 1.5 && f !== 'top') || f === 'bottom' ? pick(C.feet, hash3(i, j, p[2] | 0, 9)) : skin(p, 3);
+  const legs = [[-2, 4], [2, 4], [-2, -4], [2, -4]].map(([x, z]) => limb([4, 6, 4], [x, 6, z], [0, -3, 0], legColor));
+  root.add(head, body, ...legs);
+  root.userData = { head, legs, body };
+  return root;
+}
+
+// ═══ GATO (calico) ═══ corpo 4x6x16, cabeça 5x4x5, focinho 3x2x1, orelhas 1x1x2, patas 2x6x2 (trás) e 2x10x2 (frente), rabo 1x8x1 x2
+function createCat() {
+  const K = CFG.cat, root = new THREE.Group(); root.name = 'cat';
+  const coat = (p, belly) => {
+    const q = K.patchSize, r = hash3(Math.floor(p[0] + 64), Math.floor(p[1] + 64), Math.floor(p[2] + 64), 4);
+    if (!belly) {
+      if (noise3(p[0] / q, p[1] / q, p[2] / q, 11) > K.darkAmount) return pick(K.dark, r);
+      if (noise3(p[0] / q + 9, p[1] / q, p[2] / q, 12) > K.orangeAmount) return pick(K.orange, r);
+    }
+    return pick(K.white, r);
+  };
+  const body = pixelBox([4, 6, 16], [0, 9, 0], (f, i, j, W, H, p) => coat(p, f === 'bottom' || p[1] < 7)); body.position.set(0, 9, 0);
+  // Rosto (5x4): olhos com íris ciano, focinho branco
+  const headColor = (f, i, j, W, H, p) => {
+    if (f === 'front') {
+      if (j === 1 && (i === 1 || i === 3)) return K.eye;
+      if (j === 2 && (i === 1 || i === 3)) return K.iris;
+      if (j >= 2 && i === 2) return pick(K.white, .3);
+    }
+    return coat(p, f === 'bottom');
+  };
+  const head = limb([5, 4, 5], [0, 10, 8], [0, 0, 2.5], headColor); head.name = 'head';
+  const nose = pixelBox([3, 2, 1], [0, 9, 13], (f, i, j) => f === 'front' && j === 0 && i === 1 ? K.nose : pick(K.white, (i * 7 + j * 3) % 10 / 10));
+  nose.position.set(0, -1, 5); head.add(nose);
+  for (const x of [-1.5, 1.5]) { const ear = pixelBox([1, 1, 2], [x, 12.5, 9.5], (f, i, j, W, H, p) => coat(p, false)); ear.position.set(x, 2.5, 1.5); head.add(ear); }
+  const legColor = (f, i, j, W, H, p) => coat(p, p[1] < 3);
+  const legs = [
+    limb([2, 10, 2], [-.98, 10, 6], [0, -5, 0], legColor), limb([2, 10, 2], [.98, 10, 6], [0, -5, 0], legColor),   // frente (.98: um fio para dentro do corpo, evita faces coincidentes)
+    limb([2, 6, 2], [-.98, 6, -6.5], [0, -3, 0], legColor), limb([2, 6, 2], [.98, 6, -6.5], [0, -3, 0], legColor),  // trás
+  ];
+  // Rabo em dois segmentos, saindo do topo traseiro e subindo para trás; ponta branca
+  const tail = limb([1, 1, 8], [0, 11.5, -8], [0, 0, -4], (f, i, j, W, H, p) => coat(p, false));
+  tail.rotation.x = THREE.MathUtils.degToRad(35);
+  const tail2 = limb([1, 1, 8], [0, 0, -8], [0, 0, -4], (f, i, j, W, H, p) => p[2] < -12 ? pick(K.white, (p[2] * 7 & 3) / 4) : coat([p[0], p[1] + 11.5, p[2] - 8], false)); // metade final branca; coords locais do segmento deslocadas para continuar as manchas
+  tail2.rotation.x = THREE.MathUtils.degToRad(10);
+  tail.add(tail2);
+  root.add(body, head, ...legs, tail);
+  root.userData = { head, legs, tail, tail2 };
+  return root;
+}
+
+// ═══ VACA ═══ corpo 12x10x18, cabeça 8x8x6, chifres 1x3x1, orelhas rosa, pernas 4x12x4
+function createCow() {
+  const V = CFG.cow, root = new THREE.Group(); root.name = 'cow';
+  const r3 = (p, s = 21) => hash3(Math.floor(p[0] + 64), Math.floor(p[1] + 64), Math.floor(p[2] + 64), s);
+  const brown = p => pick(V.brown, r3(p), V.brownWeights);
+  const coat = p => noise3(p[0] / V.spotSize, p[1] / V.spotSize, p[2] / V.spotSize, 22) > V.spotAmount ? pick(V.spots, r3(p, 23), V.spotWeights) : brown(p);
+  const body = pixelBox([12, 10, 18], [0, 17, 0], (f, i, j, W, H, p) => coat(p)); body.position.set(0, 17, 0);
+  // Cabeça: rosto pelo mapa; laterais com orelha rosa perto da frente; resto marrom com manchinhas
+  const hy = 17 + V.headLift;
+  const headColor = (f, i, j, W, H, p) => {
+    if (f === 'front') { const k = V.face[j][i]; return k === 'B' ? brown(p) : V.faceColors[k]; }
+    if ((f === 'right' || f === 'left') && j >= 1 && j <= 3) { const fromFront = f === 'right' ? i : W - 1 - i; if (fromFront <= 1) return V.ear[fromFront]; }
+    if (f === 'top' && i >= 3 && i <= 4) return V.faceColors.g; // a mancha cinza da testa continua no topo
+    return brown(p);
+  };
+  const head = limb([8, 8, 6], [0, hy, 9], [0, 0, 3], headColor); head.name = 'head';
+  // Chifres: 1x3x1 nos cantos de cima, encostados na frente, 2px acima da cabeça
+  for (const x of [-4.5, 4.5]) { const horn = pixelBox([1, 3, 1], [x, hy + 4.5, 13.5], (f, i, j) => V.horn[Math.min(j, 2)]); horn.position.set(x, 4.5, 4.5); head.add(horn); }
+  // Pernas: marrom, uma listra cinza vertical na face de fora, casco preto
+  const legColor = (f, i, j, W, H, p) => {
+    if (p[1] < 1 || f === 'bottom') return V.hoof;
+    if ((f === 'left' || f === 'right' || f === 'front') && i === 2 && j >= 3 && j <= 8) return pick(V.spots, r3(p, 24), V.spotWeights);
+    return brown(p);
+  };
+  const legs = [[-3.98, 6], [3.98, 6], [-3.98, -6], [3.98, -6]].map(([x, z]) => limb([4, 12, 4], [x, 12, z], [0, -6, 0], legColor));
+  root.add(body, head, ...legs);
+  root.userData = { head, legs };
+  return root;
+}
+
+// ═══ GALINHA ═══ corpo 6x6x8, cabeça 4x6x3, bico 4x2x2, barbela 2x2x2, asas 1x4x6, pernas finas com pé de 3 dedos
+function createChicken() {
+  const G = CFG.chicken, root = new THREE.Group(); root.name = 'chicken';
+  const feather = p => pick(G.white, hash3(Math.floor(p[0] + 64), Math.floor(p[1] + 64), Math.floor(p[2] + 64), 31));
+  const body = pixelBox([6, 6, 8], [0, 8, 0], (f, i, j, W, H, p) => feather(p)); body.position.set(0, 8, 0);
+  // Cabeça: olho preto com branco atrás, nas laterais e na frente (linha de cima)
+  const headColor = (f, i, j, W, H, p) => {
+    if (f === 'front' && j === 1 && (i === 0 || i === 3)) return G.eye;
+    if ((f === 'left' || f === 'right') && j === 1 && i === (f === 'left' ? 2 : 0)) return G.eye;
+    return feather(p);
+  };
+  const head = limb([4, 6, 3], [0, 11, 3], [0, 1, 1.5], headColor); head.name = 'head';
+  const beak = pixelBox([4, 2, 2], [0, 12, 7], (f, i, j) => f === 'top' && j === 1 && (i === 0 || i === 3) ? G.beakDark : G.beak[(i + j) % 3]);
+  beak.position.set(0, 1, 4); head.add(beak);
+  const wattle = pixelBox([2, 2, 2], [0, 10, 6], (f, i, j) => G.wattle[(i + j) % 2]); wattle.position.set(0, -1, 3); head.add(wattle);
+  const wings = [-3.5, 3.5].map(x => limb([1, 4, 6], [x, 11, 0], [0, -2, 0], (f, i, j, W, H, p) => feather(p)));
+  // Perna: palito 1x4x1 + pé chato 3x1x3
+  const legs = [-1.5, 1.5].map(x => {
+    const g = new THREE.Group(); g.position.set(x, 5, .5);
+    const stick = pixelBox([1, 4, 1], [x, 3, .5], (f, i, j) => G.leg[j % 2]); stick.position.set(0, -2, 0);
+    const foot = pixelBox([3, 1, 3], [x, .5, 1], (f, i, j) => G.leg[(i + j) % 2]); foot.position.set(0, -4.5, .5);
+    g.add(stick, foot); return g;
+  });
+  root.add(body, head, ...wings, ...legs);
+  root.userData = { head, legs, wings };
+  return root;
+}
+
+// ── Cena ──
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace; renderer.shadowMap.enabled = true;
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(24, innerWidth / innerHeight, 1, 1000);
+camera.position.set(-20, 55, 165);
+
+// Posição (x) e giro (graus) de cada mob na fileira
+const creeper = createCreeper(); creeper.position.x = -42; creeper.rotation.y = THREE.MathUtils.degToRad(20);
+const cat = createCat(); cat.position.x = -14; cat.rotation.y = THREE.MathUtils.degToRad(-75);
+const cow = createCow(); cow.position.x = 16; cow.rotation.y = THREE.MathUtils.degToRad(-50);
+const chicken = createChicken(); chicken.position.x = 42; chicken.rotation.y = THREE.MathUtils.degToRad(-35);
+scene.add(creeper, cat, cow, chicken);
+
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.ShadowMaterial({ opacity: .28 }));
+floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; scene.add(floor);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x6a6f78, 1.9));
+const key = new THREE.DirectionalLight(0xffffff, 1.3); key.position.set(-20, 60, 40); key.castShadow = true; key.shadow.bias = -.0005; key.shadow.normalBias = .3;
+key.shadow.mapSize.set(2048, 2048); Object.assign(key.shadow.camera, { left: -50, right: 50, top: 50, bottom: -50 }); scene.add(key);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true; controls.target.set(0, 10, 0); controls.minDistance = 30; controls.maxDistance = 220;
+
+// ── Interação e animação ──
+let walking = true, spin = false, swell = 0;
+document.getElementById('btnWalk').onclick = () => { walking = !walking; };
+document.getElementById('btnSpin').onclick = () => { spin = !spin; };
+const ray = new THREE.Raycaster(), ptr = new THREE.Vector2(); let downAt = null;
+renderer.domElement.addEventListener('pointerdown', e => { downAt = [e.clientX, e.clientY]; });
+renderer.domElement.addEventListener('pointerup', e => {
+  if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 5) return;
+  ptr.set(e.clientX / innerWidth * 2 - 1, -(e.clientY / innerHeight) * 2 + 1); ray.setFromCamera(ptr, camera);
+  if (ray.intersectObject(creeper, true).length) swell = 1.5; // inflar e piscar por 1,5s
+});
+addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+
+const q = new URLSearchParams(location.search); if (q.has('still')) walking = false;
+const D = THREE.MathUtils.degToRad;
+let t = 0, last = performance.now(), walkAmt = 1;
+renderer.setAnimationLoop(now => {
+  const dt = Math.min(.05, (now - last) / 1000); last = now; t += dt;
+  walkAmt += ((walking ? 1 : 0) - walkAmt) * Math.min(1, dt * 5);
+  const s = Math.sin(t * CFG.walkSpeed) * D(CFG.legSwing) * walkAmt;
+  // Pernas em diagonal se movem juntas (frente-esq com trás-dir)
+  const cl = creeper.userData.legs; cl[0].rotation.x = s; cl[3].rotation.x = s; cl[1].rotation.x = -s; cl[2].rotation.x = -s;
+  creeper.userData.head.rotation.y = Math.sin(t * .7) * D(12);
+  const kl = cat.userData.legs; kl[0].rotation.x = s; kl[3].rotation.x = s; kl[1].rotation.x = -s; kl[2].rotation.x = -s;
+  // Rabo no ritmo dos passos: quica para cima/baixo a cada passada e balança de lado a cada ciclo;
+  // a ponta vem atrasada (fase) para parecer chicotear. Parado, sobra só um balanço lento.
+  const ph = t * CFG.walkSpeed, idleSway = Math.sin(t * 1.2) * D(CFG.tailSway * .5) * (1 - walkAmt);
+  const T = cat.userData;
+  T.tail.rotation.x = D(35) + Math.abs(Math.sin(ph)) * D(CFG.tailBob) * walkAmt - D(CFG.tailBob * .5) * walkAmt;
+  T.tail.rotation.y = Math.sin(ph) * D(CFG.tailSway) * walkAmt + idleSway;
+  T.tail2.rotation.x = D(10) + Math.sin(ph * 2 - 1.2) * D(CFG.tailBob * .8) * walkAmt;
+  T.tail2.rotation.y = Math.sin(ph - .9) * D(CFG.tailSway * .9) * walkAmt + idleSway * .8;
+  cat.userData.head.rotation.y = Math.sin(t * .9 + 2) * D(10);
+  // Vaca: pernas em diagonal, cabeça balança devagar e abaixa de leve a cada passo
+  const vl = cow.userData.legs; vl[0].rotation.x = s; vl[3].rotation.x = s; vl[1].rotation.x = -s; vl[2].rotation.x = -s;
+  cow.userData.head.rotation.y = Math.sin(t * .6 + 1) * D(10);
+  cow.userData.head.rotation.x = Math.abs(Math.sin(ph)) * D(4) * walkAmt;
+  // Galinha: pernas alternadas, cabeça ciscando (bica para frente), asas batem de tempos em tempos
+  const gl = chicken.userData.legs; gl[0].rotation.x = s * 1.3; gl[1].rotation.x = -s * 1.3;
+  chicken.userData.head.rotation.x = Math.max(0, Math.sin(t * 2.3)) ** 8 * D(35);
+  const fe = CFG.chicken.flapEvery, flap = fe ? Math.max(0, Math.sin(t * Math.PI * 2 / fe)) ** 10 * Math.abs(Math.sin(t * 22)) * D(70) : 0;
+  chicken.userData.wings[0].rotation.z = -flap; chicken.userData.wings[1].rotation.z = flap;
+  // Creeper inflando: escala pulsa e pisca branco
+  if (swell > 0) {
+    swell -= dt; const k = 1 + Math.max(0, Math.sin((1.5 - swell) * 9)) * .12;
+    creeper.scale.set(k, 1 + (k - 1) * .5, k);
+    creeper.traverse(o => o.isMesh && o.material.forEach(m => m.emissive.setScalar(Math.sin(t * 30) > 0 ? .55 : 0)));
+    if (swell <= 0) { creeper.scale.set(1, 1, 1); creeper.traverse(o => o.isMesh && o.material.forEach(m => m.emissive.setScalar(0))); }
+  }
+  if (spin) for (const m of [creeper, cat, cow, chicken]) m.rotation.y += dt * .6;
+  controls.update(); renderer.render(scene, camera);
+});
+</script>
+</body>
+</html>
